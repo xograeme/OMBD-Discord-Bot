@@ -9,7 +9,7 @@ A self-hosted Discord bot that looks up movies and TV shows on OMDb, recommends 
 ## Features
 
 - Movie and TV lookup with poster, ratings, cast, awards, and an IMDb link (OMDb)
-- "Watch Now" link button on movie results that opens `https://velarium.cc/embed/movie/<IMDb ID>`. It is left off when a result has no IMDb ID.
+- Optional "Watch Now" link button on results when configured with custom streaming/watch URL templates. It is omitted when unconfigured or when a result has no IMDb ID.
 - Random recommendations across 15 genres, including anime, with a "Recommend Another" button
 - Optional TMDB-powered recommendations by genre or by actor/director
 - YouTube trailer lookup
@@ -53,7 +53,7 @@ Chat examples: "Tell me about Inception", "Recommend me a scary movie", "Trailer
 
 ## Installation
 
-The project has no requirements file. These are the packages the code imports.
+Install dependencies using `requirements.txt`:
 
 ```bash
 git clone YOUR_REPO_URL
@@ -77,6 +77,9 @@ DISCORD_TOKEN=YOUR_DISCORD_TOKEN
 OMDB_API_KEY=YOUR_OMDB_API_KEY
 TYPESAFE_API_KEY=YOUR_FREEJEV_API_KEY
 TMDB_ACCESS_TOKEN=YOUR_TMDB_ACCESS_TOKEN
+# Optional watch link templates:
+# WATCH_MOVIE_URL_TEMPLATE=https://your-streaming-service.com/movie/{id}
+# WATCH_TV_URL_TEMPLATE=https://your-streaming-service.com/tv/{id}-{s}-{e}
 ```
 
 | Variable | Purpose | Required | Placeholder |
@@ -86,6 +89,8 @@ TMDB_ACCESS_TOKEN=YOUR_TMDB_ACCESS_TOKEN
 | `TYPESAFE_API_KEY` | FreeJev key for plain-English chat. Without it, chat replies that it can't understand messages. Slash commands still work. | Optional | `YOUR_FREEJEV_API_KEY` |
 | `JEV_ENDPOINT` | Override the FreeJev endpoint | Optional | `YOUR_JEV_ENDPOINT` |
 | `TMDB_ACCESS_TOKEN` | TMDB bearer token for actor/director and genre discovery. Without it, recommendations come from the built-in list. | Optional | `YOUR_TMDB_ACCESS_TOKEN` |
+| `WATCH_MOVIE_URL_TEMPLATE` | URL template for movie "Watch Now" buttons (uses `{id}`). | Optional | `https://your-service.com/movie/{id}` |
+| `WATCH_TV_URL_TEMPLATE` | URL template for TV "Watch Now" buttons (uses `{id}`, `{s}`, `{e}`). | Optional | `https://your-service.com/tv/{id}-{s}-{e}` |
 
 ## Discord setup
 

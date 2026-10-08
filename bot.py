@@ -20,6 +20,8 @@ load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OMDB_API_KEY = os.getenv("OMDB_API_KEY")
+WATCH_MOVIE_URL_TEMPLATE = os.getenv("WATCH_MOVIE_URL_TEMPLATE")
+WATCH_TV_URL_TEMPLATE = os.getenv("WATCH_TV_URL_TEMPLATE")
 
 if not DISCORD_TOKEN or not OMDB_API_KEY:
     raise RuntimeError("Add DISCORD_TOKEN and OMDB_API_KEY to your .env file.")
@@ -423,12 +425,11 @@ class MovieActionView(discord.ui.View):
 # ---------- Shared helpers (used by slash commands and natural-language chat) ----------
 
 async def add_watch_button(view: discord.ui.View, movie_info: dict, season: int = None, episode: int = None):
-    """Add a 'Watch Now' link button using the OMDb imdbID. Skipped if the ID is missing."""
+    """Add a 'Watch Now' link button if streaming URL templates are configured and IMDb ID is available."""
     old_button = getattr(view, "watch_button", None)
     if old_button is not None:
         view.remove_item(old_button)
         view.watch_button = None
-    view.watch_enabled = True
 
     imdb_id = movie_info.get("imdbID")
     if not imdb_id or imdb_id == "N/A":
@@ -436,14 +437,25 @@ async def add_watch_button(view: discord.ui.View, movie_info: dict, season: int 
 
     is_series = movie_info.get("Type") == "series"
     if is_series:
+        if not WATCH_TV_URL_TEMPLATE:
+            return
         s = season if season is not None else 1
         e = episode if episode is not None else 1
         tmdb_id = await tmdb_client.fetch_tmdb_tv_id(imdb_id)
         show_id = tmdb_id if tmdb_id else imdb_id
-        url = f"https://velarium.cc/en/watch/tv/{show_id}-{s}-{e}?autoPlay=true&autoNext=true"
+        try:
+            url = WATCH_TV_URL_TEMPLATE.format(id=show_id, s=s, e=e)
+        except Exception:
+            return
     else:
-        url = f"https://velarium.cc/embed/movie/{imdb_id}"
+        if not WATCH_MOVIE_URL_TEMPLATE:
+            return
+        try:
+            url = WATCH_MOVIE_URL_TEMPLATE.format(id=imdb_id)
+        except Exception:
+            return
 
+    view.watch_enabled = True
     view.watch_button = discord.ui.Button(
         style=discord.ButtonStyle.link,
         label="Watch Now",
