@@ -119,6 +119,10 @@ watchlists.db     SQLite database (created at runtime)
 
 Open an issue or pull request. Keep changes focused, and test slash commands in a private server before submitting.
 
+## Attribution
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
