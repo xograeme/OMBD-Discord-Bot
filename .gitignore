@@ -1,0 +1,12 @@
+# Secrets
+.env
+OMDb Api Key.txt
+
+# Local data
+watchlists.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

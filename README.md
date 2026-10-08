@@ -1,0 +1,124 @@
+# OMDb Discord Bot
+
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![discord.py](https://img.shields.io/badge/discord.py-2.x-5865F2)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+
+A self-hosted Discord bot that looks up movies and TV shows on OMDb, recommends movies, fetches trailers, and keeps watchlists, with a "Watch Now" button on results.
+
+## Features
+
+- Movie and TV lookup with poster, ratings, cast, awards, and an IMDb link (OMDb)
+- "Watch Now" link button on movie results that opens `https://velarium.cc/embed/movie/<IMDb ID>`. It is left off when a result has no IMDb ID.
+- Random recommendations across 15 genres, including anime, with a "Recommend Another" button
+- Optional TMDB-powered recommendations by genre or by actor/director
+- YouTube trailer lookup
+- Shared server watchlist with a watched history
+- Personal watchlist (replies are private)
+- `/marathon` adds every OMDb match for a franchise name to the server watchlist
+- Plain-English chat through the FreeJev API: @mention the bot, DM it, or use `/ask` to search, get recommendations, find trailers, look up actors/directors, and view or add to watchlists
+
+## Screenshots
+
+![/movie embed with Watch Now button](docs/omdb-bot.png)
+
+## Commands
+
+| Command | Arguments | Description |
+|---|---|---|
+| `/movie` | `title`, optional `year` | Look up a movie or TV show |
+| `/recommend` | optional `genre` | Random recommendation. Genres: action, sci-fi, comedy, drama, horror, animation, thriller, romance, mystery, fantasy, documentary, family, adventure, crime, anime |
+| `/trailer` | `title` | YouTube trailer link |
+| `/marathon` | `franchise` | Add all matching movies to the server watchlist (server only) |
+| `/watchlist add` | `title` | Add to the server watchlist |
+| `/watchlist view` | none | Show the server watchlist |
+| `/watchlist watched` | `title` | Move a matching entry to server history |
+| `/watchlist history` | none | Show the last 50 watched movies |
+| `/watchlist clear` | none | Delete the whole server watchlist (no confirmation) |
+| `/personal add` | `title` | Add to your personal watchlist |
+| `/personal view` | none | Show your personal watchlist |
+| `/personal remove` | `title` | Remove a matching entry |
+| `/personal clear` | none | Delete your whole personal watchlist (no confirmation) |
+| `/ask` | `message` | Plain-English request, same as @mentioning the bot |
+
+Chat examples: "Tell me about Inception", "Recommend me a scary movie", "Trailer for Dune", "Movies with Tom Hanks", "Add Interstellar to the watchlist", "Show my watchlist". In servers, @mention the bot. In DMs, just send the message.
+
+## Prerequisites
+
+- Python 3.10 or newer [CONFIRM: not pinned in the project; the code uses `str | None` annotations]
+- A Discord bot token
+- An OMDb API key (required)
+- A FreeJev API key (needed for plain-English chat)
+- A TMDB access token (optional)
+
+## Installation
+
+The project has no requirements file. These are the packages the code imports.
+
+```bash
+git clone YOUR_REPO_URL
+cd "OMBD Discord Bot"
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# macOS/Linux:
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+`requests` is only used by the standalone `movie_search.py`.
+
+## Configuration
+
+Create a `.env` file in the project root:
+
+```
+DISCORD_TOKEN=YOUR_DISCORD_TOKEN
+OMDB_API_KEY=YOUR_OMDB_API_KEY
+TYPESAFE_API_KEY=YOUR_FREEJEV_API_KEY
+TMDB_ACCESS_TOKEN=YOUR_TMDB_ACCESS_TOKEN
+```
+
+| Variable | Purpose | Required | Placeholder |
+|---|---|---|---|
+| `DISCORD_TOKEN` | Discord bot token | Yes | `YOUR_DISCORD_TOKEN` |
+| `OMDB_API_KEY` | OMDb lookups | Yes | `YOUR_OMDB_API_KEY` |
+| `TYPESAFE_API_KEY` | FreeJev key for plain-English chat. Without it, chat replies that it can't understand messages. Slash commands still work. | Optional | `YOUR_FREEJEV_API_KEY` |
+| `JEV_ENDPOINT` | Override the FreeJev endpoint | Optional | `YOUR_JEV_ENDPOINT` |
+| `TMDB_ACCESS_TOKEN` | TMDB bearer token for actor/director and genre discovery. Without it, recommendations come from the built-in list. | Optional | `YOUR_TMDB_ACCESS_TOKEN` |
+
+## Discord setup
+
+1. Create an application in the Discord Developer Portal and add a Bot. Copy its token into `.env`.
+2. No privileged intents are needed. The bot uses default intents.
+3. Invite it with the `bot` and `applications.commands` scopes. Permissions: View Channels, Send Messages, Embed Links, Read Message History. [CONFIRM: inferred from behavior, not declared in code]
+4. On startup the bot syncs slash commands to every server it is in.
+
+## Running the bot
+
+```bash
+python bot.py
+```
+
+Run it from the project folder. The SQLite database `watchlists.db` is created in the working directory on first run.
+
+## Project structure
+
+```
+bot.py            Entry point, slash commands, database, chat handling
+jev_client.py     FreeJev client plus title and person extraction
+tmdb_client.py    TMDB genre and person discovery
+movie_search.py   Standalone command-line OMDb lookup
+test_jev.py       Manual test for the FreeJev layer
+test_search.py    Manual test for OMDb search
+watchlists.db     SQLite database (created at runtime)
+.env              Your keys (do not commit)
+```
+
+## Contributing
+
+Open an issue or pull request. Keep changes focused, and test slash commands in a private server before submitting.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
