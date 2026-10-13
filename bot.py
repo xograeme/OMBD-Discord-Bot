@@ -1,4 +1,5 @@
 import asyncio
+import math
 import os
 import random
 import re
@@ -507,28 +508,315 @@ def _list_embed(title: str, lines: list, colour: discord.Colour) -> discord.Embe
     return discord.Embed(title=title, description=description, color=colour)
 
 
+async def fetch_watchlist_records(guild_id: int = None, user_id: int = None, is_server: bool = True) -> list[dict]:
+    """Fetch watchlist records with IDs and metadata."""
+    if is_server:
+        rows = await async_db_query(
+            "SELECT id, movie_title, added_by FROM server_watchlist WHERE guild_id = ? ORDER BY added_at ASC",
+            (guild_id,), fetchall=True
+        )
+        if not rows:
+            return []
+        return [{"id": r[0], "title": r[1], "added_by": r[2]} for r in rows]
+    else:
+        rows = await async_db_query(
+            "SELECT id, movie_title FROM personal_watchlist WHERE user_id = ? ORDER BY added_at ASC",
+            (user_id,), fetchall=True
+        )
+        if not rows:
+            return []
+        return [{"id": r[0], "title": r[1], "added_by": None} for r in rows]
+
+
+def build_watchlist_embed(items: list[dict], page: int, page_size: int, is_server: bool, user_name: str = "") -> discord.Embed:
+    """Build a paginated embed for server or personal watchlist."""
+    total_items = len(items)
+    if total_items == 0:
+        if is_server:
+            return discord.Embed(
+                title="🍿 Server Watchlist",
+                description="The server watchlist is currently empty. Use `/watchlist add` to add some movies!",
+                color=discord.Color.blue()
+            )
+        else:
+            return discord.Embed(
+                title=f"🍿 {user_name}'s Watchlist" if user_name else "🍿 Personal Watchlist",
+                description="Your personal watchlist is empty!",
+                color=discord.Color.purple()
+            )
+
+    total_pages = max(1, math.ceil(total_items / page_size))
+    clamped_page = max(0, min(page, total_pages - 1))
+    start_idx = clamped_page * page_size
+    page_items = items[start_idx:start_idx + page_size]
+
+    lines = []
+    for offset, item in enumerate(page_items):
+        item_num = start_idx + offset + 1
+        m_title = item["title"]
+        if is_server:
+            added_by = item.get("added_by")
+            line = f"**{item_num}.** {m_title} *(added by <@{added_by}>)*"
+        else:
+            line = f"**{item_num}.** {m_title}"
+        lines.append(line)
+
+    description = "\n".join(lines)
+    title = "🍿 Server Watchlist" if is_server else (f"🍿 {user_name}'s Watchlist" if user_name else "🍿 Personal Watchlist")
+    color = discord.Color.blue() if is_server else discord.Color.purple()
+
+    embed = discord.Embed(title=title, description=description, color=color)
+    embed.set_footer(text=f"Page {clamped_page + 1} of {total_pages} • {total_items} movie{'s' if total_items != 1 else ''} total")
+    return embed
+
+
+class WatchlistPaginationView(discord.ui.View):
+    """Stateful paginated view for server and personal watchlists with in-card actions."""
+
+    def __init__(
+        self,
+        author_id: int,
+        guild_id: int | None,
+        user_id: int | None,
+        is_server: bool,
+        items: list[dict],
+        user_name: str = "",
+        page: int = 0,
+        page_size: int = 5,
+        timeout: float = 180.0
+    ):
+        super().__init__(timeout=timeout)
+        self.author_id = author_id
+        self.guild_id = guild_id
+        self.user_id = user_id
+        self.is_server = is_server
+        self.items = items
+        self.user_name = user_name
+        self.current_page = page
+        self.page_size = page_size
+        self.message: discord.Message | None = None
+        self._lock = asyncio.Lock()
+        self._refresh_components()
+
+    @property
+    def total_pages(self) -> int:
+        if not self.items:
+            return 1
+        return max(1, math.ceil(len(self.items) / self.page_size))
+
+    def _clamp_page(self):
+        self.current_page = max(0, min(self.current_page, self.total_pages - 1))
+
+    def _get_page_items(self) -> list[dict]:
+        self._clamp_page()
+        start = self.current_page * self.page_size
+        return self.items[start:start + self.page_size]
+
+    def _refresh_components(self):
+        """Reconstruct UI components based on current page and items."""
+        self.clear_items()
+        self._clamp_page()
+
+        if not self.items:
+            return
+
+        page_items = self._get_page_items()
+        start_num = self.current_page * self.page_size
+
+        # In-card Action 1: Mark as Watched (for Server Watchlist)
+        if self.is_server:
+            watched_options = []
+            for idx, item in enumerate(page_items):
+                display_num = start_num + idx + 1
+                short_title = item["title"]
+                if len(short_title) > 90:
+                    short_title = short_title[:87] + "..."
+                label = f"{display_num}. {short_title}"
+                if len(label) > 100:
+                    label = label[:97] + "..."
+                watched_options.append(discord.SelectOption(
+                    label=label,
+                    value=str(item["id"]),
+                    emoji="🍿",
+                    description=f"Mark #{display_num} as watched"[:100]
+                ))
+
+            if watched_options:
+                watched_select = discord.ui.Select(
+                    placeholder="🍿 Mark a movie as Watched...",
+                    options=watched_options,
+                    row=0,
+                    custom_id="watchlist_select_watched"
+                )
+                watched_select.callback = self._watched_callback
+                self.add_item(watched_select)
+
+        # In-card Action 2: Remove (for Server and Personal Watchlists)
+        remove_options = []
+        for idx, item in enumerate(page_items):
+            display_num = start_num + idx + 1
+            short_title = item["title"]
+            if len(short_title) > 90:
+                short_title = short_title[:87] + "..."
+            label = f"{display_num}. {short_title}"
+            if len(label) > 100:
+                label = label[:97] + "..."
+            remove_options.append(discord.SelectOption(
+                label=label,
+                value=str(item["id"]),
+                emoji="🗑️",
+                description=f"Remove #{display_num} from list"[:100]
+            ))
+
+        if remove_options:
+            remove_select = discord.ui.Select(
+                placeholder="🗑️ Remove a movie from Watchlist...",
+                options=remove_options,
+                row=1 if self.is_server else 0,
+                custom_id="watchlist_select_remove"
+            )
+            remove_select.callback = self._remove_callback
+            self.add_item(remove_select)
+
+        # Pagination Buttons
+        nav_row = 2 if self.is_server else 1
+
+        prev_button = discord.ui.Button(
+            label="Previous",
+            style=discord.ButtonStyle.secondary,
+            emoji="◀",
+            disabled=(self.current_page <= 0),
+            row=nav_row,
+            custom_id="watchlist_btn_prev"
+        )
+        prev_button.callback = self._prev_callback
+        self.add_item(prev_button)
+
+        next_button = discord.ui.Button(
+            label="Next",
+            style=discord.ButtonStyle.secondary,
+            emoji="▶",
+            disabled=(self.current_page >= self.total_pages - 1),
+            row=nav_row,
+            custom_id="watchlist_btn_next"
+        )
+        next_button.callback = self._next_callback
+        self.add_item(next_button)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the person who requested this watchlist can use these controls.",
+                ephemeral=True
+            )
+            return False
+        return True
+
+    def build_current_embed(self) -> discord.Embed:
+        return build_watchlist_embed(
+            self.items,
+            self.current_page,
+            self.page_size,
+            self.is_server,
+            self.user_name
+        )
+
+    async def _update_view_response(self, interaction: discord.Interaction):
+        self._refresh_components()
+        embed = self.build_current_embed()
+        try:
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+        except Exception:
+            if self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except Exception:
+                    pass
+
+    async def _prev_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        async with self._lock:
+            if self.current_page > 0:
+                self.current_page -= 1
+            await self._update_view_response(interaction)
+
+    async def _next_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        async with self._lock:
+            if self.current_page < self.total_pages - 1:
+                self.current_page += 1
+            await self._update_view_response(interaction)
+
+    async def _watched_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        selected_val = interaction.data.get("values", [None])[0] if interaction.data else None
+        if not selected_val:
+            return
+
+        async with self._lock:
+            selected_id = int(selected_val)
+            row = await async_db_query(
+                "SELECT movie_title FROM server_watchlist WHERE id = ?",
+                (selected_id,), fetch=True
+            )
+            if row and self.guild_id:
+                movie_title = row[0]
+                await async_db_query("DELETE FROM server_watchlist WHERE id = ?", (selected_id,))
+                await async_db_query(
+                    "INSERT INTO server_history (guild_id, movie_title, marked_by) VALUES (?, ?, ?)",
+                    (self.guild_id, movie_title, interaction.user.id)
+                )
+
+            await self._refetch_and_update(interaction)
+
+    async def _remove_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        selected_val = interaction.data.get("values", [None])[0] if interaction.data else None
+        if not selected_val:
+            return
+
+        async with self._lock:
+            selected_id = int(selected_val)
+            if self.is_server:
+                await async_db_query("DELETE FROM server_watchlist WHERE id = ?", (selected_id,))
+            else:
+                await async_db_query("DELETE FROM personal_watchlist WHERE id = ?", (selected_id,))
+
+            await self._refetch_and_update(interaction)
+
+    async def _refetch_and_update(self, interaction: discord.Interaction):
+        self.items = await fetch_watchlist_records(self.guild_id, self.user_id, self.is_server)
+        self._clamp_page()
+        await self._update_view_response(interaction)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except Exception:
+                pass
+
+
 async def server_watchlist_embed(guild_id: int):
     """Embed of the server watchlist, or None if it's empty."""
-    rows = await async_db_query(
-        "SELECT movie_title, added_by FROM server_watchlist WHERE guild_id = ? ORDER BY added_at ASC",
-        (guild_id,), fetchall=True
-    )
-    if not rows:
+    items = await fetch_watchlist_records(guild_id=guild_id, is_server=True)
+    if not items:
         return None
-    lines = [f"**{i}.** {m_title} *(added by <@{added_by}>)*" for i, (m_title, added_by) in enumerate(rows, 1)]
-    return _list_embed("🍿 Server Watchlist", lines, discord.Color.blue())
+    return build_watchlist_embed(items, page=0, page_size=5, is_server=True)
 
 
 async def personal_watchlist_embed(user: discord.abc.User):
     """Embed of a user's personal watchlist, or None if it's empty."""
-    rows = await async_db_query(
-        "SELECT movie_title FROM personal_watchlist WHERE user_id = ? ORDER BY added_at ASC",
-        (user.id,), fetchall=True
-    )
-    if not rows:
+    items = await fetch_watchlist_records(user_id=user.id, is_server=False)
+    if not items:
         return None
-    lines = [f"**{i}.** {m_title}" for i, (m_title,) in enumerate(rows, 1)]
-    return _list_embed(f"🍿 {user.display_name}'s Watchlist", lines, discord.Color.purple())
+    user_name = getattr(user, "display_name", str(user))
+    return build_watchlist_embed(items, page=0, page_size=5, is_server=False, user_name=user_name)
 
 
 # ---------- Natural-language chat powered by FreeJev ----------
@@ -641,16 +929,32 @@ async def handle_natural_request(text: str, user: discord.abc.User, guild_id: in
             if action == "view_server":
                 if not guild_id:
                     return {"content": "The server watchlist only exists inside a server."}
-                embed = await server_watchlist_embed(guild_id)
-                if not embed:
+                items = await fetch_watchlist_records(guild_id=guild_id, is_server=True)
+                if not items:
                     return {"content": "The server watchlist is empty. Ask me to add something!"}
-                return {"embed": embed}
+                view = WatchlistPaginationView(
+                    author_id=user.id,
+                    guild_id=guild_id,
+                    user_id=None,
+                    is_server=True,
+                    items=items,
+                    user_name=getattr(user, "display_name", str(user))
+                )
+                return {"embed": view.build_current_embed(), "view": view}
 
             if action == "view_personal":
-                embed = await personal_watchlist_embed(user)
-                if not embed:
+                items = await fetch_watchlist_records(user_id=user.id, is_server=False)
+                if not items:
                     return {"content": "Your personal watchlist is empty!", "private": True}
-                return {"embed": embed, "private": True}
+                view = WatchlistPaginationView(
+                    author_id=user.id,
+                    guild_id=None,
+                    user_id=user.id,
+                    is_server=False,
+                    items=items,
+                    user_name=getattr(user, "display_name", str(user))
+                )
+                return {"embed": view.build_current_embed(), "view": view, "private": True}
 
             if action == "add":
                 title, year = extract_title(text)
@@ -1002,13 +1306,27 @@ async def watchlist_add(interaction: discord.Interaction, title: str):
 async def watchlist_view(interaction: discord.Interaction):
     await interaction.response.defer()
     
-    embed = await server_watchlist_embed(interaction.guild_id)
+    if not interaction.guild_id:
+        await interaction.followup.send("The server watchlist can only be viewed within a server.", ephemeral=True)
+        return
+
+    items = await fetch_watchlist_records(guild_id=interaction.guild_id, is_server=True)
     
-    if not embed:
+    if not items:
         await interaction.followup.send("The server watchlist is currently empty. Use `/watchlist add` to add some movies!")
         return
         
-    await interaction.followup.send(embed=embed)
+    view = WatchlistPaginationView(
+        author_id=interaction.user.id,
+        guild_id=interaction.guild_id,
+        user_id=None,
+        is_server=True,
+        items=items,
+        user_name=interaction.user.display_name
+    )
+    embed = view.build_current_embed()
+    msg = await interaction.followup.send(embed=embed, view=view)
+    view.message = msg
 
 @server_group.command(name="watched", description="Mark a movie as watched and move to history")
 @app_commands.describe(title="Movie title (exact match from watchlist)")
@@ -1089,13 +1407,23 @@ async def personal_add(interaction: discord.Interaction, title: str):
 async def personal_view(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
-    embed = await personal_watchlist_embed(interaction.user)
+    items = await fetch_watchlist_records(user_id=interaction.user.id, is_server=False)
     
-    if not embed:
-        await interaction.followup.send("Your personal watchlist is empty!")
+    if not items:
+        await interaction.followup.send("Your personal watchlist is empty!", ephemeral=True)
         return
         
-    await interaction.followup.send(embed=embed)
+    view = WatchlistPaginationView(
+        author_id=interaction.user.id,
+        guild_id=None,
+        user_id=interaction.user.id,
+        is_server=False,
+        items=items,
+        user_name=interaction.user.display_name
+    )
+    embed = view.build_current_embed()
+    msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    view.message = msg
 
 @personal_group.command(name="remove", description="Remove a movie from your personal watchlist")
 @app_commands.describe(title="Movie title")
@@ -1130,5 +1458,6 @@ async def personal_clear(interaction: discord.Interaction):
 bot.tree.add_command(server_group)
 bot.tree.add_command(personal_group)
 
-bot.run(DISCORD_TOKEN)
+if __name__ == "__main__":
+    bot.run(DISCORD_TOKEN)
 
