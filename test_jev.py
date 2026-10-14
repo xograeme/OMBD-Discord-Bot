@@ -2,6 +2,7 @@
 import asyncio
 import logging
 
+import aiohttp
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,14 +26,15 @@ SAMPLES = [
 
 
 async def main():
-    client = JevClient()
-    for text in SAMPLES:
-        analysis = await client.analyze(text)
-        title, year = extract_title(text)
-        print(
-            f"{text!r:45} -> intent={analysis['intent']:<16} genre={analysis['genre']:<10} "
-            f"watchlist={analysis['watchlist_action']:<14} title={title!r} year={year}"
-        )
+    async with aiohttp.ClientSession() as session:
+        client = JevClient(session)
+        for text in SAMPLES:
+            analysis = await client.analyze(text)
+            title, year = extract_title(text)
+            print(
+                f"{text!r:45} -> intent={analysis['intent']:<16} genre={analysis['genre']:<10} "
+                f"watchlist={analysis['watchlist_action']:<14} title={title!r} year={year}"
+            )
 
 
 if __name__ == "__main__":

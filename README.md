@@ -110,15 +110,34 @@ Run it from the project folder. The SQLite database `watchlists.db` is created i
 ## Project structure
 
 ```
-bot.py            Entry point, slash commands, database, chat handling
-jev_client.py     FreeJev client plus title and person extraction
-tmdb_client.py    TMDB genre and person discovery
-movie_search.py   Standalone command-line OMDb lookup
-test_jev.py       Manual test for the FreeJev layer
-test_search.py    Manual test for OMDb search
-watchlists.db     SQLite database (created at runtime)
-.env              Your keys (do not commit)
+bot.py                       Entry point, slash commands, database, chat handling
+jev_client.py                FreeJev client plus title and person extraction
+tmdb_client.py               TMDB genre and person discovery
+movie_search.py              Standalone command-line OMDb lookup
+test_jev.py                  Manual test for the FreeJev layer
+test_search.py               Manual test for OMDb search
+test_watchlist_pagination.py Unit tests for watchlist pagination
+tests/                       Unit test suite for session lifecycle and client integration
+watchlists.db                SQLite database (created at runtime)
+.env                         Your keys (do not commit)
 ```
+
+## Changelog
+
+### Latest - 2026-10-14
+- **Shared ClientSession Architecture**: Refactored `bot.py`, `tmdb_client.py`, and `jev_client.py` to share a single persistent `aiohttp.ClientSession` owned and managed by `MovieBot.setup_hook`.
+- **Connection Reuse & Optimization**: Configured connection pooling (`limit=100`, `limit_per_host=20`, `ttl_dns_cache=300`) and standard client timeouts, eliminating repeated SSL handshakes and preventing socket exhaustion while keeping per-request timeout overrides intact.
+- **Clean Lifecycle & Shutdown**: Implemented `MovieBot.close` to cleanly and safely close the shared session during shutdown with zero resource warnings.
+- **Comprehensive Unit Tests**: Added unit test suite in `tests/test_session_lifecycle.py` verifying session configuration, shutdown idempotence, client request routing, and confirming no per-request sessions are created.
+
+### 2026-10-13
+- **Interactive Watchlist Pagination**: Added interactive paginated embed views for server and personal watchlists with next/previous buttons and in-card dropdown actions (`watched` and `remove`).
+- **Watchlist Test Coverage**: Added unit tests in `test_watchlist_pagination.py` covering pagination calculations, boundary navigation states, and user permission checks.
+
+### 2026-10-08
+- **Configurable Streaming Links**: Added support for customizable `WATCH_MOVIE_URL_TEMPLATE` and `WATCH_TV_URL_TEMPLATE` environment variables to generate dynamic "Watch Now" buttons.
+- **Attribution Update**: Added TMDB API attribution notice to documentation.
+- **Initial Release**: Initial bot setup with OMDb title lookups, genre recommendations, YouTube trailers, server/personal watchlist tracking, and FreeJev natural language chat integration.
 
 ## Contributing
 

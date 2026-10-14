@@ -116,7 +116,8 @@ def extract_person(text: str) -> str | None:
 class JevClient:
     """Small async client for the FreeJev decisions API."""
 
-    def __init__(self, timeout: float = 15.0):
+    def __init__(self, session: aiohttp.ClientSession, timeout: float = 15.0):
+        self.session = session
         self.api_key = os.getenv("TYPESAFE_API_KEY")
         self.endpoint = os.getenv("JEV_ENDPOINT", "https://freejev.org/api/v1/decisions")
         self.timeout = aiohttp.ClientTimeout(total=timeout)
@@ -139,12 +140,11 @@ class JevClient:
 
         async with self._lock:
             try:
-                async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                    async with session.post(self.endpoint, headers=headers, json=payload) as response:
-                        if response.status != 200:
-                            log.error(f"FreeJev API returned {response.status}: {await response.text()}")
-                            return None
-                        data = await response.json()
+                async with self.session.post(self.endpoint, headers=headers, json=payload, timeout=self.timeout) as response:
+                    if response.status != 200:
+                        log.error(f"FreeJev API returned {response.status}: {await response.text()}")
+                        return None
+                    data = await response.json()
             except asyncio.TimeoutError:
                 log.warning("FreeJev API timed out.")
                 return None

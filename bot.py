@@ -212,7 +212,7 @@ async def fetch_youtube_trailer(query: str) -> str:
     return await asyncio.to_thread(_search)
 
 
-async def fetch_omdb_data(title: str, year: int = None) -> dict:
+async def fetch_omdb_data(session: aiohttp.ClientSession, title: str, year: int = None) -> dict:
     """Fetch movie details from OMDb API asynchronously."""
     params = {
         "t": title,
@@ -222,35 +222,31 @@ async def fetch_omdb_data(title: str, year: int = None) -> dict:
     if year is not None:
         params["y"] = str(year)
 
-    timeout = aiohttp.ClientTimeout(total=15)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get("https://www.omdbapi.com/", params=params) as response:
-            response.raise_for_status()
-            return await response.json()
+    async with session.get("https://www.omdbapi.com/", params=params, timeout=aiohttp.ClientTimeout(total=15)) as response:
+        response.raise_for_status()
+        return await response.json()
 
 
-async def fetch_omdb_search(query: str, type_filter: str = "movie", max_pages: int = 5) -> list:
+async def fetch_omdb_search(session: aiohttp.ClientSession, query: str, type_filter: str = "movie", max_pages: int = 5) -> list:
     """Fetch a list of search results from OMDb API asynchronously (handles pagination)."""
     results = []
-    timeout = aiohttp.ClientTimeout(total=15)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        for page in range(1, max_pages + 1):
-            params = {
-                "s": query,
-                "apikey": OMDB_API_KEY,
-                "type": type_filter,
-                "page": str(page)
-            }
-            async with session.get("https://www.omdbapi.com/", params=params) as response:
-                response.raise_for_status()
-                data = await response.json()
-                if data.get("Response") == "True":
-                    search_results = data.get("Search", [])
-                    results.extend(search_results)
-                    if len(search_results) < 10:
-                        break
-                else:
+    for page in range(1, max_pages + 1):
+        params = {
+            "s": query,
+            "apikey": OMDB_API_KEY,
+            "type": type_filter,
+            "page": str(page)
+        }
+        async with session.get("https://www.omdbapi.com/", params=params, timeout=aiohttp.ClientTimeout(total=15)) as response:
+            response.raise_for_status()
+            data = await response.json()
+            if data.get("Response") == "True":
+                search_results = data.get("Search", [])
+                results.extend(search_results)
+                if len(search_results) < 10:
                     break
+            else:
+                break
     
     unique_results = {movie.get('imdbID'): movie for movie in results if movie.get('imdbID')}.values()
     return list(unique_results)
@@ -357,10 +353,10 @@ class RecommendView(discord.ui.View):
     ):
         await interaction.response.defer()
 
-        chosen_title = await pick_recommendation(self.genre, self.person_name)
+        chosen_title = await pick_recommendation(self.genre, self.person_name, session=bot.session)
 
         try:
-            movie_info = await fetch_omdb_data(chosen_title)
+            movie_info = await fetch_omdb_data(bot.session, chosen_title)
             if movie_info.get("Response") == "True":
                 header_parts = []
                 if self.genre: header_parts.append(self.genre.title())
@@ -372,7 +368,7 @@ class RecommendView(discord.ui.View):
                     footer_text="Movie Recommendation • Data from TMDB/OMDb • Click title for IMDb"
                 )
                 if getattr(self, "watch_enabled", False):
-                    await add_watch_button(self, movie_info)
+                    await add_watch_button(self, movie_info, session=bot.session)
                 await interaction.edit_original_response(embed=embed, view=self)
             else:
                 await interaction.followup.send(
@@ -425,8 +421,9 @@ class MovieActionView(discord.ui.View):
 
 # ---------- Shared helpers (used by slash commands and natural-language chat) ----------
 
-async def add_watch_button(view: discord.ui.View, movie_info: dict, season: int = None, episode: int = None):
+async def add_watch_button(view: discord.ui.View, movie_info: dict, season: int = None, episode: int = None, session: aiohttp.ClientSession = None):
     """Add a 'Watch Now' link button if streaming URL templates are configured and IMDb ID is available."""
+    session = session or bot.session
     old_button = getattr(view, "watch_button", None)
     if old_button is not None:
         view.remove_item(old_button)
@@ -442,7 +439,7 @@ async def add_watch_button(view: discord.ui.View, movie_info: dict, season: int 
             return
         s = season if season is not None else 1
         e = episode if episode is not None else 1
-        tmdb_id = await tmdb_client.fetch_tmdb_tv_id(imdb_id)
+        tmdb_id = await tmdb_client.fetch_tmdb_tv_id(session, imdb_id)
         show_id = tmdb_id if tmdb_id else imdb_id
         try:
             url = WATCH_TV_URL_TEMPLATE.format(id=show_id, s=s, e=e)
@@ -466,10 +463,11 @@ async def add_watch_button(view: discord.ui.View, movie_info: dict, season: int 
     view.add_item(view.watch_button)
 
 
-async def pick_recommendation(genre: str = None, person_name: str = None) -> str:
+async def pick_recommendation(genre: str = None, person_name: str = None, session: aiohttp.ClientSession = None) -> str:
     """Pick a random title, optionally from a specific genre and/or actor/director."""
+    session = session or bot.session
     if tmdb_client.TMDB_ACCESS_TOKEN and (genre or person_name):
-        movies = await tmdb_client.discover_movies(genre, person_name)
+        movies = await tmdb_client.discover_movies(session, genre, person_name)
         if movies:
             return random.choice(movies)["title"]
 
@@ -480,20 +478,22 @@ async def pick_recommendation(genre: str = None, person_name: str = None) -> str
     return random.choice(pool)
 
 
-async def lookup_movie(title: str, year: int = None) -> dict:
+async def lookup_movie(title: str, year: int = None, session: aiohttp.ClientSession = None) -> dict:
     """OMDb lookup that retries without a leading 'the' (common in chat phrasing)."""
-    movie_info = await fetch_omdb_data(title, year)
+    session = session or bot.session
+    movie_info = await fetch_omdb_data(session, title, year)
     if movie_info.get("Response") != "True" and title.lower().startswith("the "):
-        retry = await fetch_omdb_data(title[4:], year)
+        retry = await fetch_omdb_data(session, title[4:], year)
         if retry.get("Response") == "True":
             return retry
     return movie_info
 
 
-async def resolve_canonical_title(title: str, year: int = None) -> str:
+async def resolve_canonical_title(title: str, year: int = None, session: aiohttp.ClientSession = None) -> str:
     """Turn user input into 'Title (Year)' using OMDb, falling back to the raw input."""
+    session = session or bot.session
     try:
-        movie_info = await lookup_movie(title, year)
+        movie_info = await lookup_movie(title, year, session=session)
         if movie_info.get("Response") == "True":
             return f"{movie_info.get('Title')} ({movie_info.get('Year')})"
     except Exception:
@@ -821,7 +821,7 @@ async def personal_watchlist_embed(user: discord.abc.User):
 
 # ---------- Natural-language chat powered by FreeJev ----------
 
-jev = JevClient()
+jev: JevClient | None = None
 
 CHAT_HELP = (
     "🎬 **Just ask me in plain English!** For example:\n"
@@ -839,7 +839,11 @@ async def handle_natural_request(text: str, user: discord.abc.User, guild_id: in
     Classify a chat message with Jev and run the matching bot feature.
     Returns send() kwargs plus a 'private' flag for results only the user should see.
     """
-    analysis = await jev.analyze(text)
+    active_jev = bot.jev or jev
+    if not active_jev:
+        return {"content": "⚠️ I'm having trouble understanding messages right now.\n\n" + CHAT_HELP}
+
+    analysis = await active_jev.analyze(text)
     intent = analysis["intent"]
     print(f"[Jev] {user} -> {analysis} :: {text!r}")
 
@@ -850,8 +854,8 @@ async def handle_natural_request(text: str, user: discord.abc.User, guild_id: in
         if intent == "recommend":
             genre = None if analysis["genre"] == "any" else analysis["genre"]
             person_name = extract_person(text)
-            chosen_title = await pick_recommendation(genre, person_name)
-            movie_info = await fetch_omdb_data(chosen_title)
+            chosen_title = await pick_recommendation(genre, person_name, session=bot.session)
+            movie_info = await fetch_omdb_data(bot.session, chosen_title)
             if movie_info.get("Response") != "True":
                 return {"content": f"Could not load recommendation for '{chosen_title}'. Please try again."}
             
@@ -865,7 +869,7 @@ async def handle_natural_request(text: str, user: discord.abc.User, guild_id: in
                 footer_text="Movie Recommendation • Data from TMDB/OMDb • Click title for IMDb"
             )
             view = RecommendView(genre=genre, person_name=person_name)
-            await add_watch_button(view, movie_info)
+            await add_watch_button(view, movie_info, session=bot.session)
             return {"embed": embed, "view": view}
 
         if intent == "actor":
@@ -877,11 +881,11 @@ async def handle_natural_request(text: str, user: discord.abc.User, guild_id: in
             if not person_name or len(person_name) < 3:
                 return {"content": "Which actor or director are you looking for?"}
             
-            chosen_title = await pick_recommendation(person_name=person_name)
+            chosen_title = await pick_recommendation(person_name=person_name, session=bot.session)
             if not chosen_title:
                 return {"content": f"I couldn't find any well-known movies for **{person_name}**."}
                 
-            movie_info = await fetch_omdb_data(chosen_title)
+            movie_info = await fetch_omdb_data(bot.session, chosen_title)
             if movie_info.get("Response") != "True":
                 return {"content": f"Could not load recommendation for '{chosen_title}'."}
                 
@@ -891,7 +895,7 @@ async def handle_natural_request(text: str, user: discord.abc.User, guild_id: in
                 footer_text="Actor Search • Data from TMDB/OMDb • Click title for IMDb"
             )
             view = RecommendView(person_name=person_name.title())
-            await add_watch_button(view, movie_info)
+            await add_watch_button(view, movie_info, session=bot.session)
             return {"embed": embed, "view": view}
 
         if intent == "search":
@@ -1001,9 +1005,22 @@ class MovieBot(discord.Client):
     def __init__(self):
         super().__init__(intents=discord.Intents.default())
         self.tree = app_commands.CommandTree(self)
+        self.session: aiohttp.ClientSession | None = None
+        self.jev: JevClient | None = None
 
     async def setup_hook(self):
+        timeout = aiohttp.ClientTimeout(total=15, connect=5)
+        connector = aiohttp.TCPConnector(limit=100, limit_per_host=20, ttl_dns_cache=300)
+        self.session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+        self.jev = JevClient(self.session)
+        global jev
+        jev = self.jev
         await self.tree.sync()
+
+    async def close(self):
+        if self.session and not self.session.closed:
+            await self.session.close()
+        await super().close()
 
 
 bot = MovieBot()
@@ -1110,7 +1127,7 @@ async def movie(
     await interaction.response.defer(thinking=True)
 
     try:
-        movie_info = await fetch_omdb_data(title, year)
+        movie_info = await fetch_omdb_data(bot.session, title, year)
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         await interaction.followup.send(
             "I couldn't reach the movie service. Please try again.",
@@ -1135,7 +1152,7 @@ async def movie(
     embed = build_movie_embed(movie_info, custom_header=custom_header)
     canonical_title = f"{movie_info.get('Title')} ({movie_info.get('Year')})"
     view = MovieActionView(movie_title=canonical_title)
-    await add_watch_button(view, movie_info, season=season, episode=episode)
+    await add_watch_button(view, movie_info, season=season, episode=episode, session=bot.session)
     
     await interaction.followup.send(embed=embed, view=view)
 
@@ -1174,10 +1191,10 @@ async def recommend(
     await interaction.response.defer(thinking=True)
 
     selected_genre = genre.value if genre else None
-    chosen_title = await pick_recommendation(selected_genre)
+    chosen_title = await pick_recommendation(selected_genre, session=bot.session)
 
     try:
-        movie_info = await fetch_omdb_data(chosen_title)
+        movie_info = await fetch_omdb_data(bot.session, chosen_title)
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         await interaction.followup.send(
             "I couldn't reach the movie service. Please try again.",
@@ -1200,7 +1217,7 @@ async def recommend(
     )
 
     view = RecommendView(genre=selected_genre)
-    await add_watch_button(view, movie_info)
+    await add_watch_button(view, movie_info, session=bot.session)
     await interaction.followup.send(embed=embed, view=view)
 
 @bot.tree.command(
@@ -1212,7 +1229,7 @@ async def trailer(interaction: discord.Interaction, title: str):
     await interaction.response.defer()
     
     # Try resolving canonical name using OMDb for better search accuracy
-    canonical_title = await resolve_canonical_title(title)
+    canonical_title = await resolve_canonical_title(title, session=bot.session)
         
     trailer_url = await fetch_youtube_trailer(canonical_title)
     
@@ -1235,7 +1252,7 @@ async def marathon(interaction: discord.Interaction, franchise: str):
     await interaction.response.defer()
     
     try:
-        movies = await fetch_omdb_search(franchise)
+        movies = await fetch_omdb_search(bot.session, franchise)
     except Exception as e:
         await interaction.followup.send("An error occurred while fetching movies from OMDb.", ephemeral=True)
         print(f"Error in /marathon fetch: {e}")
