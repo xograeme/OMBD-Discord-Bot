@@ -4,6 +4,7 @@ OMDb Api Key.txt
 
 # Local data
 watchlists.db
+trivia_scores.db
 
 # Python
 __pycache__/

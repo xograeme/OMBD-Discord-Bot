@@ -15,6 +15,7 @@ A self-hosted Discord bot that looks up movies and TV shows on OMDb, recommends 
 - YouTube trailer lookup
 - Shared server watchlist with a watched history
 - Personal watchlist (replies are private)
+- Movie trivia with redacted plot or cast clues, timed rounds, and per-server leaderboards
 - `/marathon` adds every OMDb match for a franchise name to the server watchlist
 - Plain-English chat through the FreeJev API: @mention the bot, DM it, or use `/ask` to search, get recommendations, find trailers, look up actors/directors, and view or add to watchlists
 
@@ -40,6 +41,9 @@ A self-hosted Discord bot that looks up movies and TV shows on OMDb, recommends 
 | `/personal remove` | `title` | Remove a matching entry |
 | `/personal clear` | none | Delete your whole personal watchlist (no confirmation) |
 | `/ask` | `message` | Plain-English request, same as @mentioning the bot |
+| `/trivia start` | optional `mode`: `plot` (default) or `cast` | Start a 60-second movie trivia round in the channel |
+| `/trivia leaderboard` | none | Show the server's top 10 trivia players |
+| `/trivia stop` | none | End the channel's active round and reveal the answer |
 
 Chat examples: "Tell me about Inception", "Recommend me a scary movie", "Trailer for Dune", "Movies with Tom Hanks", "Add Interstellar to the watchlist", "Show my watchlist". In servers, @mention the bot. In DMs, just send the message.
 
@@ -95,17 +99,33 @@ TMDB_ACCESS_TOKEN=YOUR_TMDB_ACCESS_TOKEN
 ## Discord setup
 
 1. Create an application in the Discord Developer Portal and add a Bot. Copy its token into `.env`.
-2. No privileged intents are needed. The bot uses default intents.
+2. Enable **Message Content Intent** under Bot → Privileged Gateway Intents in the Discord Developer Portal. The code enables this intent so trivia can read guesses in server channels.
 3. Invite it with the `bot` and `applications.commands` scopes. Permissions: View Channels, Send Messages, Embed Links, Read Message History. [CONFIRM: inferred from behavior, not declared in code]
 4. On startup the bot syncs slash commands to every server it is in.
 
 ## Running the bot
 
-```bash
-python bot.py
+Use the Python interpreter from the environment where you installed the dependencies. On Windows, you can run it directly without activating the environment:
+
+```cmd
+.venv\Scripts\python.exe bot.py
 ```
 
-Run it from the project folder. The SQLite database `watchlists.db` is created in the working directory on first run.
+On macOS/Linux:
+
+```bash
+.venv/bin/python bot.py
+```
+
+Run it from the project folder. The SQLite databases `watchlists.db` and `trivia_scores.db` are created in the working directory on first run.
+
+If startup reports `ModuleNotFoundError: No module named 'aiohttp'`, use the environment's interpreter above and install dependencies with that same interpreter (`.venv\Scripts\python.exe -m pip install -r requirements.txt` on Windows). If it reports `PrivilegedIntentsRequired`, enable **Message Content Intent** in your application's Discord Developer Portal Bot settings, save changes, and restart the bot.
+
+## Trivia
+
+Use `/trivia start` for a redacted plot clue (10 points), or `/trivia start mode:cast` for up to four cast members (15 points). Type the movie title in that channel; the first correct guess wins. Each channel allows one 60-second round. `/trivia stop` ends it and reveals the answer; `/trivia leaderboard` shows the server's top ten players.
+
+Set `OMDB_API_KEY` in your environment or `.env`, and enable **Message Content Intent** in the Discord Developer Portal as described above. Scores persist separately in `trivia_scores.db`, created in the working directory; the existing watchlist database is unaffected.
 
 ## Project structure
 
@@ -114,17 +134,25 @@ bot.py                       Entry point, slash commands, database, chat handlin
 jev_client.py                FreeJev client plus title and person extraction
 tmdb_client.py               TMDB genre and person discovery
 movie_search.py              Standalone command-line OMDb lookup
+trivia/                      OMDb clues, title matching, rounds, scores, and slash commands
 test_jev.py                  Manual test for the FreeJev layer
 test_search.py               Manual test for OMDb search
 test_watchlist_pagination.py Unit tests for watchlist pagination
-tests/                       Unit test suite for session lifecycle and client integration
+tests/                       Unit tests for trivia, session lifecycle, and client integration
 watchlists.db                SQLite database (created at runtime)
+trivia_scores.db             Separate trivia leaderboard database (created at runtime)
 .env                         Your keys (do not commit)
 ```
 
 ## Changelog
 
-### Latest - 2026-10-14
+### Latest - 2026-10-27
+- Added `/trivia start`, `/trivia leaderboard`, and `/trivia stop`, with redacted plot/cast clues, 60-second rounds, and persistent per-server scores.
+- Enabled Message Content Intent for channel guesses and documented the required Discord portal setting.
+- Added mocked tests for OMDb retries, redaction, matching, winner races, timers, storage, and Discord wiring.
+- Documented running with the virtual environment's Python interpreter and troubleshooting startup errors.
+
+### 2026-10-14
 - **Shared ClientSession Architecture**: Refactored `bot.py`, `tmdb_client.py`, and `jev_client.py` to share a single persistent `aiohttp.ClientSession` owned and managed by `MovieBot.setup_hook`.
 - **Connection Reuse & Optimization**: Configured connection pooling (`limit=100`, `limit_per_host=20`, `ttl_dns_cache=300`) and standard client timeouts, eliminating repeated SSL handshakes and preventing socket exhaustion while keeping per-request timeout overrides intact.
 - **Clean Lifecycle & Shutdown**: Implemented `MovieBot.close` to cleanly and safely close the shared session during shutdown with zero resource warnings.

@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from jev_client import JevClient, extract_title, extract_person
 import tmdb_client
+from trivia.cog import setup_trivia
 
 
 # Read your private keys from .env
@@ -1003,10 +1004,13 @@ def _send_kwargs(result: dict) -> dict:
 # Set up the bot and its slash commands
 class MovieBot(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self.session: aiohttp.ClientSession | None = None
         self.jev: JevClient | None = None
+        self.trivia = None
 
     async def setup_hook(self):
         timeout = aiohttp.ClientTimeout(total=15, connect=5)
@@ -1015,9 +1019,12 @@ class MovieBot(discord.Client):
         self.jev = JevClient(self.session)
         global jev
         jev = self.jev
+        self.trivia = await setup_trivia(self)
         await self.tree.sync()
 
     async def close(self):
+        if self.trivia is not None:
+            await self.trivia.close()
         if self.session and not self.session.closed:
             await self.session.close()
         await super().close()
@@ -1053,6 +1060,8 @@ async def on_ready():
 @bot.event
 async def on_message(message: discord.Message):
     """Answer plain-English messages when the bot is @mentioned or DMed."""
+    if bot.trivia is not None:
+        await bot.trivia.on_message(message)
     if message.author.bot:
         return
 
